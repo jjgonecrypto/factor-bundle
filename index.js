@@ -26,9 +26,9 @@ module.exports = function f (b, opts) {
         .concat(opts._).filter(Boolean);
 
     var needRecords = !files.length;
-    
+
     var outopt = defined(opts.outputs, opts.output, opts.o);
-     
+
     opts.objectMode = true;
     opts.raw = true;
     opts.rmap = {};
@@ -81,9 +81,14 @@ module.exports = function f (b, opts) {
                 if (ix >= outputs.length) {
                     outputs.push.apply(outputs, moreOutputs(x));
                 }
-                if (outputs[ix]) pipeline.pipe(outputs[ix]);
-                
-                acc[path.resolve(cwd, x)] = pipeline;
+                if (outputs[ix]) {
+                    pipeline.pipe(outputs[ix]);
+                }
+
+                acc[path.resolve(cwd, x)] = {
+                    pipeline: pipeline,
+                    output: outputs[ix]
+                };
                 return acc;
             }, {});
 
@@ -91,12 +96,12 @@ module.exports = function f (b, opts) {
             b._bpack.hasExports = true;
 
             Object.keys(pipelines).forEach(function (id) {
-                b.emit('factor.pipeline', id, pipelines[id]);
+                b.emit('factor.pipeline', id, pipelines[id].pipeline, pipelines[id].output);
             });
 
             var s = createStream(files, opts);
             s.on('stream', function (bundle) {
-                bundle.pipe(pipelines[bundle.file]);
+                bundle.pipe(pipelines[bundle.file].pipeline);
             });
 
             b.pipeline.get('pack').unshift(s);
@@ -118,10 +123,10 @@ module.exports = function f (b, opts) {
 
 function createStream (files, opts) {
     if (!opts) opts = {};
-    
+
     var fr = new Factor(files, opts);
     var parse, dup;
-    
+
     if (opts.objectMode) {
         dup = combine(depsTopoSort(), reverse(), fr);
     }
@@ -135,7 +140,7 @@ function createStream (files, opts) {
         ;
         parse.on('error', function (err) { dup.emit('error', err) });
     }
-    
+
     fr.on('error', function (err) { dup.emit('error', err) });
     fr.on('stream', function (s) {
         if (opts.raw) dup.emit('stream', s)
@@ -150,21 +155,21 @@ function Factor (files, opts) {
     var self = this;
     if (!(this instanceof Factor)) return new Factor(files, opts);
     Transform.call(this, { objectMode: true });
-    
+
     if (!opts) opts = {};
     this.basedir = defined(opts.basedir, process.cwd());
-    
+
     this._streams = {};
     this._groups = {};
     this._buffered = {};
-    
+
     this._ensureCommon = {};
     this._files = files.reduce(function (acc, file) {
         acc[path.resolve(self.basedir, file)] = true;
         return acc;
     }, {});
     this._rmap = opts.rmap || {};
-    
+
     this._thresholdVal = typeof opts.threshold === "number"
         ? opts.threshold : 1
     ;
@@ -200,9 +205,9 @@ Factor.prototype._transform = function (row, enc, next) {
             self._streams[id].push(row);
         });
     }
-    
+
     next();
-    
+
     function addGroups (gid) {
         Object.keys(row.deps || {}).forEach(function (key) {
             var file = row.deps[key];
@@ -215,7 +220,7 @@ Factor.prototype._transform = function (row, enc, next) {
 
 Factor.prototype._flush = function () {
     var self = this;
-    
+
     Object.keys(self._streams).forEach(function (key) {
         self._streams[key].push(null);
     });
